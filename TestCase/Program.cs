@@ -74,26 +74,21 @@ List<string> jsons = [
 const int N = 100_000;
 var sw = new Stopwatch();
 
-var successA = solutionA() is [ "Paula", "Lucas" ];
-sw.Start();
-for (int i = 0; i < N; i++)
-    solutionA();
-sw.Stop();
-Console.WriteLine($"{"solution A", -20}{sw.ElapsedMilliseconds, -4} ms  {successA, -5}  8 lines");
+evaluate("Solução Genérica", solutionA, 8);
+evaluate("Solução Própria", solutionB, 63);
+evaluate("Dynasharp", solutionC, 5);
 
-var successB = solutionB() is [ "Paula", "Lucas" ];
-sw.Restart();
-for (int i = 0; i < N; i++)
-    solutionB();
-sw.Stop();
-Console.WriteLine($"{"solution B", -20}{sw.ElapsedMilliseconds, -4} ms  {successB, -5}  63 lines");
+void evaluate(string title, Func<List<string?>> solution, int lines)
+{
+    var success = solution() is ["Paula", "Lucas"];
 
-var successC = solutionC() is [ "Paula", "Lucas" ];
-sw.Restart();
-for (int i = 0; i < N; i++)
-    solutionC();
-sw.Stop();
-Console.WriteLine($"{"solution C", -20}{sw.ElapsedMilliseconds, -4} ms  {successC, -5}  5 lines");
+    sw.Restart();
+    for (int i = 0; i < N; i++)
+        solution();
+    sw.Stop();
+
+    Console.WriteLine($"{title,-20}{sw.ElapsedMilliseconds,-4} ms  {success,-5}  {lines} lines");
+}
 
 List<string?> solutionA()
 {
