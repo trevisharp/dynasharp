@@ -1,4 +1,8 @@
 ﻿using System.Diagnostics;
+using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text.Json;
 using Dynasharp;
 
@@ -75,7 +79,7 @@ const int N = 100_000;
 var sw = new Stopwatch();
 
 evaluate("Solução Genérica", solutionA, 8);
-evaluate("Solução Própria", solutionB, 63);
+evaluate("Solução Própria", solutionB, 119);
 evaluate("Dynasharp", solutionC, 5);
 
 void evaluate(string title, Func<List<string?>> solution, int lines)
@@ -106,74 +110,123 @@ List<string?> solutionB()
     List<string?> names = [with(jsons.Count)];
 
     foreach (string json in jsons)
-    {
-        int friends = json.IndexOf("\"friends\"", StringComparison.Ordinal);
-
-        if (friends < 0)
-        {
-            names.Add(null);
-            continue;
-        }
-
-        int i = json.IndexOf('[', friends);
-        int end = json.IndexOf(']', i);
-
-        if (i < 0 || end < 0)
-        {
-            names.Add(null);
-            continue;
-        }
-
-        string? oldestName = null;
-        int maxAge = int.MinValue;
-
-        while (i < end)
-        {
-            int nameKey = json.IndexOf("\"name\"", i, end - i, StringComparison.Ordinal);
-
-            if (nameKey < 0)
-                break;
-
-            int nameStart = json.IndexOf('"', nameKey + 6) + 1;
-            int nameEnd = json.IndexOf('"', nameStart);
-
-            int ageKey = json.IndexOf("\"age\"", nameEnd, end - nameEnd, StringComparison.Ordinal);
-            if (ageKey < 0)
-                break;
-
-            int ageStart = json.IndexOf(':', ageKey) + 1;
-
-            while (json[ageStart] == ' ')
-                ageStart++;
-
-            int ageEnd = ageStart;
-
-            while (ageEnd < end && json[ageEnd] >= '0' && json[ageEnd] <= '9')
-                ageEnd++;
-
-            int age = int.Parse(json.AsSpan(ageStart, ageEnd - ageStart));
-
-            if (age > maxAge)
-            {
-                maxAge = age;
-                oldestName = json.Substring(nameStart, nameEnd - nameStart);
-            }
-
-            i = ageEnd;
-        }
-
-        names.Add(oldestName);
-    }
+        names.Add(oldestFriend(json));
 
     return names;
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    static string? oldestFriend(string json)
+    {
+        ReadOnlySpan<char> s = json;
+
+        int i = s.IndexOf("\"friends\"");
+        if (i < 0)
+            return null;
+        i += 9;
+
+        int open = s[i..].IndexOf('[');
+        if (open < 0)
+            return null;
+        i += open + 1;
+
+        // Varre o array uma única vez com SIMD: cada bloco de 16 chars gera uma
+        // máscara de '"' e de ']', e os bits são percorridos em ordem. Evita o
+        // custo fixo de dezenas de chamadas a IndexOf em trechos curtos.
+        ref ushort r = ref Unsafe.As<char, ushort>(ref MemoryMarshal.GetReference(s));
+        var quote = Vector256.Create((ushort)'"');
+        var close = Vector256.Create((ushort)']');
+
+        int strStart = -1;
+        bool nextIsName = false;
+        int nameStart = -1, nameLength = 0;
+        int bestStart = -1, bestLength = 0;
+        int maxAge = int.MinValue;
+
+        for (; i < s.Length; i += Vector256<ushort>.Count)
+        {
+            uint quotes = 0, closes = 0;
+
+            if (i + Vector256<ushort>.Count <= s.Length)
+            {
+                var v = Vector256.LoadUnsafe(ref r, (nuint)i);
+                quotes = Vector256.Equals(v, quote).ExtractMostSignificantBits();
+                closes = Vector256.Equals(v, close).ExtractMostSignificantBits();
+            }
+            else
+            {
+                for (int k = 0; i + k < s.Length; k++)
+                {
+                    if (s[i + k] == '"')
+                        quotes |= 1u << k;
+                    else if (s[i + k] == ']')
+                        closes |= 1u << k;
+                }
+            }
+
+            bool done = closes != 0;
+            if (done)
+                quotes &= (closes & (0u - closes)) - 1; // só aspas antes do primeiro ']'
+
+            while (quotes != 0)
+            {
+                int q = i + BitOperations.TrailingZeroCount(quotes);
+                quotes &= quotes - 1;
+
+                if (strStart < 0)
+                {
+                    strStart = q + 1;
+                    continue;
+                }
+
+                ReadOnlySpan<char> str = s[strStart..q];
+
+                if (nextIsName)
+                {
+                    nameStart = strStart;
+                    nameLength = str.Length;
+                    nextIsName = false;
+                }
+                else if (str is "name")
+                {
+                    nextIsName = true;
+                }
+                else if (str is "age")
+                {
+                    int p = q + 1;
+                    uint digit;
+
+                    while ((digit = (uint)(s[p] - '0')) > 9)
+                        p++;
+
+                    int age = 0;
+                    do
+                    {
+                        age = age * 10 + (int)digit;
+                        p++;
+                    }
+                    while ((digit = (uint)(s[p] - '0')) <= 9);
+
+                    if (age > maxAge)
+                    {
+                        maxAge = age;
+                        bestStart = nameStart;
+                        bestLength = nameLength;
+                    }
+                }
+
+                strStart = -1;
+            }
+
+            if (done)
+                break;
+        }
+
+        return bestStart < 0 ? null : json.Substring(bestStart, bestLength);
+    }
 }
 
 List<string?> solutionC()
 {
-    var data = 
-        Dy.FromJson(jsons)
-        ?.Select(item => item.friends.MaxBy("age").name);
-    
     return null!;
 }
 
