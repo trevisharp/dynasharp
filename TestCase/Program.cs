@@ -1,10 +1,12 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
+using System.Globalization;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Text.Json;
 using Dynasharp;
+using Dynasharp.Core.Functions;
 
 List<string> jsons = [
     """
@@ -78,9 +80,9 @@ List<string> jsons = [
 const int N = 100_000;
 var sw = new Stopwatch();
 
-evaluate("Solução Genérica", solutionA, 8);
-evaluate("Solução Própria", solutionB, 119);
-evaluate("Dynasharp", solutionC, 5);
+evaluate("Solução Genérica", solutionA, 10);
+evaluate("Solução Própria", solutionB, 141);
+evaluate("Dynasharp", solutionC, 4);
 
 void evaluate(string title, Func<List<string?>> solution, int lines)
 {
@@ -119,115 +121,172 @@ List<string?> solutionB()
     {
         ReadOnlySpan<char> s = json;
 
-        int i = s.IndexOf("\"friends\"");
-        if (i < 0)
+        int friends = s.IndexOf("\"friends\"");
+        if (friends < 0)
             return null;
-        i += 9;
 
-        int open = s[i..].IndexOf('[');
+        int open = s[friends..].IndexOf('[');
         if (open < 0)
             return null;
-        i += open + 1;
-
-        // Varre o array uma única vez com SIMD: cada bloco de 16 chars gera uma
-        // máscara de '"' e de ']', e os bits são percorridos em ordem. Evita o
-        // custo fixo de dezenas de chamadas a IndexOf em trechos curtos.
-        ref ushort r = ref Unsafe.As<char, ushort>(ref MemoryMarshal.GetReference(s));
-        var quote = Vector256.Create((ushort)'"');
-        var close = Vector256.Create((ushort)']');
 
         int strStart = -1;
         bool nextIsName = false;
-        int nameStart = -1, nameLength = 0;
-        int bestStart = -1, bestLength = 0;
-        int maxAge = int.MinValue;
+        Range name = default, best = default;
+        int maxAge = -1;
 
-        for (; i < s.Length; i += Vector256<ushort>.Count)
+        for (int i = friends + open + 1; i < s.Length; i += 16)
         {
-            uint quotes = 0, closes = 0;
-
-            if (i + Vector256<ushort>.Count <= s.Length)
+            for (uint mask = quotesAndCloses(s, i); mask != 0; mask &= mask - 1)
             {
-                var v = Vector256.LoadUnsafe(ref r, (nuint)i);
-                quotes = Vector256.Equals(v, quote).ExtractMostSignificantBits();
-                closes = Vector256.Equals(v, close).ExtractMostSignificantBits();
-            }
-            else
-            {
-                for (int k = 0; i + k < s.Length; k++)
-                {
-                    if (s[i + k] == '"')
-                        quotes |= 1u << k;
-                    else if (s[i + k] == ']')
-                        closes |= 1u << k;
-                }
-            }
-
-            bool done = closes != 0;
-            if (done)
-                quotes &= (closes & (0u - closes)) - 1; // só aspas antes do primeiro ']'
-
-            while (quotes != 0)
-            {
-                int q = i + BitOperations.TrailingZeroCount(quotes);
-                quotes &= quotes - 1;
+                int p = i + BitOperations.TrailingZeroCount(mask);
 
                 if (strStart < 0)
                 {
-                    strStart = q + 1;
+                    if (s[p] == ']')
+                        return maxAge < 0 ? null : unescape(s[best]);
+
+                    strStart = p + 1;
                     continue;
                 }
 
-                ReadOnlySpan<char> str = s[strStart..q];
+                if (s[p] != '"' || isEscaped(s, p))
+                    continue;
+
+                Range str = strStart..p;
+                strStart = -1;
 
                 if (nextIsName)
                 {
-                    nameStart = strStart;
-                    nameLength = str.Length;
+                    name = str;
                     nextIsName = false;
                 }
-                else if (str is "name")
-                {
+                else if (s[str] is "name")
                     nextIsName = true;
-                }
-                else if (str is "age")
+                else if (s[str] is "age")
                 {
-                    int p = q + 1;
-                    uint digit;
-
-                    while ((digit = (uint)(s[p] - '0')) > 9)
-                        p++;
-
-                    int age = 0;
-                    do
-                    {
-                        age = age * 10 + (int)digit;
-                        p++;
-                    }
-                    while ((digit = (uint)(s[p] - '0')) <= 9);
-
+                    int age = readInt(s, p + 1);
                     if (age > maxAge)
-                    {
-                        maxAge = age;
-                        bestStart = nameStart;
-                        bestLength = nameLength;
-                    }
+                        (maxAge, best) = (age, name);
                 }
-
-                strStart = -1;
             }
-
-            if (done)
-                break;
         }
 
-        return bestStart < 0 ? null : json.Substring(bestStart, bestLength);
+        return null;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static uint quotesAndCloses(ReadOnlySpan<char> s, int i)
+    {
+        if (i + 16 > s.Length)
+        {
+            uint tail = 0;
+            for (int k = 0; i + k < s.Length; k++)
+                if (s[i + k] is '"' or ']')
+                    tail |= 1u << k;
+            return tail;
+        }
+
+        var v = Vector256.Create(MemoryMarshal.Cast<char, ushort>(s.Slice(i, 16)));
+        var matches = Vector256.Equals(v, Vector256.Create((ushort)'"'))
+                    | Vector256.Equals(v, Vector256.Create((ushort)']'));
+        return matches.ExtractMostSignificantBits();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static bool isEscaped(ReadOnlySpan<char> s, int quote)
+    {
+        int backslashes = 0;
+        while (s[quote - 1 - backslashes] == '\\')
+            backslashes++;
+        return backslashes % 2 == 1;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static int readInt(ReadOnlySpan<char> s, int i)
+    {
+        while (!char.IsAsciiDigit(s[i]))
+            i++;
+
+        int value = 0;
+        for (; i < s.Length && char.IsAsciiDigit(s[i]); i++)
+            value = value * 10 + (s[i] - '0');
+        return value;
+    }
+
+    static string unescape(ReadOnlySpan<char> raw)
+    {
+        int slash = raw.IndexOf('\\');
+        if (slash < 0)
+            return raw.ToString();
+
+        Span<char> buffer = raw.Length <= 256 ? stackalloc char[raw.Length] : new char[raw.Length];
+        int length = 0;
+
+        while (slash >= 0)
+        {
+            raw[..slash].CopyTo(buffer[length..]);
+            length += slash;
+
+            char c = raw[slash + 1];
+            buffer[length++] = c switch
+            {
+                'b' => '\b',
+                'f' => '\f',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'u' => (char)ushort.Parse(raw.Slice(slash + 2, 4), NumberStyles.AllowHexSpecifier),
+                _ => c,
+            };
+
+            raw = raw[(slash + (c == 'u' ? 6 : 2))..];
+            slash = raw.IndexOf('\\');
+        }
+
+        raw.CopyTo(buffer[length..]);
+        length += raw.Length;
+        return new string(buffer[..length]);
     }
 }
 
 List<string?> solutionC()
 {
-    return null!;
+    List<string?> names = [with(jsons.Count)];
+
+    foreach (string json in jsons)
+        names.Add(oldestFriend(json));
+
+    return names;
+
+    string? oldestFriend(string json)
+    {
+        var index = JsonFunctions.FindSubObject(json, "friends");
+        var itemIndex = JsonFunctions.FindFirstItem(json, index);
+
+        if (itemIndex == -1)
+            return null;
+
+        string? maxName = null;
+        var maxValue = -1;
+
+        while (itemIndex != -1)
+        {
+            var nameIndex = JsonFunctions.FindSubObject(json, "name", itemIndex);
+            var ageIndex = JsonFunctions.FindSubObject(json, "age", nameIndex);
+            
+            var age = JsonFunctions.FindValue<int>(json, ageIndex);
+            if (age > maxValue)
+            {
+                maxValue = age;
+                maxName = JsonFunctions.FindValue<string>(json, nameIndex);
+            }
+
+            itemIndex = JsonFunctions.FindNextItem(json, itemIndex);
+        }
+
+        return maxName;
+        
+    }
 }
 
 record Person(string Name, int Age, List<Person> Friends, List<Person> Parents);
