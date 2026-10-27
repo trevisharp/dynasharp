@@ -84,7 +84,7 @@ var sw = new Stopwatch();
 
 evaluate("Solução Genérica", solutionA, 10);
 evaluate("Solução Própria", solutionB, 141);
-evaluate("Dynasharp", solutionC, 4);
+evaluate("Dynasharp", solutionC, 42);
 evaluate("Dynasharp 2", solutionD, 4);
 
 void evaluate(string title, Func<List<string?>> solution, int lines)
@@ -297,12 +297,12 @@ List<string?> solutionC()
 
 List<string?> solutionD()
 {
-    var algorithm = Dy.Optimize((list<ojson> json) => json);
+    var algorithm = Dy.Optimize((list<ojson> jsons) => 
+        from json in jsons
+        select json
+    );
 
     return [];
-    // return
-    //     from json in jsons
-    //     select json.friends.MaxBy(f => f.age).name;
 }
 
 record Person(string Name, int Age, List<Person> Friends, List<Person> Parents);
