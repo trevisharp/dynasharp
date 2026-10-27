@@ -5,6 +5,8 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Text.Json;
+
+
 using Dynasharp;
 using Dynasharp.Core.Functions;
 
@@ -258,7 +260,8 @@ List<string?> solutionC()
 
     return names;
 
-    string? oldestFriend(string json)
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    static string? oldestFriend(string json)
     {
         var index = JsonFunctions.FindSubObject(json, "friends");
         var itemIndex = JsonFunctions.FindFirstItem(json, index);
@@ -281,12 +284,25 @@ List<string?> solutionC()
                 maxName = JsonFunctions.FindValue<string>(json, nameIndex);
             }
 
-            itemIndex = JsonFunctions.FindNextItem(json, itemIndex);
+            // Continua de onde a busca por "age" parou, sem reler o item
+            itemIndex = ageIndex >= 0
+                ? JsonFunctions.FindNextItemFrom(json, ageIndex)
+                : JsonFunctions.FindNextItem(json, itemIndex);
         }
 
         return maxName;
-        
+
     }
+}
+
+List<string> solutionD()
+{
+    var algorithm = Dy.Optimize((ojson json) => json);
+
+    return [];
+    // return
+    //     from json in jsons
+    //     select json.friends.MaxBy(f => f.age).name;
 }
 
 record Person(string Name, int Age, List<Person> Friends, List<Person> Parents);

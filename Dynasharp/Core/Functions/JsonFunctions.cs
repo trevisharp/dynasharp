@@ -26,7 +26,6 @@ public static class JsonFunctions
         if (start < 0)
             return default;
 
-        // string precisa tirar as aspas e desescapar; os demais vêm crus
         if (typeof(T) == typeof(string))
             return (T?)(object?)ReadString(json, start);
 
@@ -38,6 +37,7 @@ public static class JsonFunctions
     /// Returns the index of the first item of the array that starts at
     /// <paramref name="start"/>, or -1 when it is empty or not an array.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static int FindFirstItem(ReadOnlySpan<char> json, int start = 0)
     {
         if (start < 0 || json[start] != '[')
@@ -57,7 +57,57 @@ public static class JsonFunctions
         if (start < 0)
             return -1;
 
-        int i = SkipWhitespace(json, EndOfValue(json, start));
+        return ItemAfter(json, EndOfValue(json, start));
+    }
+
+    /// <summary>
+    /// Like <see cref="FindNextItem"/>, but <paramref name="position"/> points to a
+    /// direct value of the current item (e.g. a <see cref="FindSubObject"/> result),
+    /// so only the rest of the item is scanned instead of the whole item.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static int FindNextItemFrom(ReadOnlySpan<char> json, int position)
+    {
+        if (position < 0)
+            return -1;
+
+        int from = json[position] is '{' or '[' or '"'
+            ? EndOfValue(json, position)
+            : position;
+        if (from < 0)
+            return -1;
+
+        int depth = 1;
+        var reader = new StructuralReader(json, from);
+
+        while (reader.Next(out int p))
+        {
+            switch (json[p])
+            {
+                case '"':
+                    break;
+
+                case '{' or '[':
+                    depth++;
+                    break;
+
+                default:
+                    if (--depth == 0)
+                        return ItemAfter(json, p + 1);
+                    break;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Given the index right after an item, returns the index of the next
+    /// item of the array, or -1 when it was the last.
+    /// </summary>
+    static int ItemAfter(ReadOnlySpan<char> json, int end)
+    {
+        int i = SkipWhitespace(json, end);
         if (i < 0 || json[i] != ',')
             return -1;
 
@@ -111,6 +161,7 @@ public static class JsonFunctions
     /// Returns the index right after the value that starts at <paramref name="start"/>,
     /// or -1 when the json ends first.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     static int EndOfValue(ReadOnlySpan<char> json, int start)
     {
         if (json[start] is not ('{' or '[' or '"'))
@@ -151,13 +202,19 @@ public static class JsonFunctions
     static string? ReadString(ReadOnlySpan<char> json, int start)
     {
         if (json[start] != '"')
-            return null; // null ou valor que não é string
-
-        var reader = new StructuralReader(json, start);
-        if (!reader.Next(out _))
             return null;
 
-        return StringFunctions.Unescape(json[(start + 1)..reader.StringEnd]);
+        int end = start;
+        do
+        {
+            int quote = json[(end + 1)..].IndexOf('"');
+            if (quote < 0)
+                return null;
+            end += quote + 1;
+        }
+        while (IsEscaped(json, end));
+
+        return StringFunctions.Unescape(json[(start + 1)..end]);
     }
 
     /// <summary>
@@ -172,10 +229,17 @@ public static class JsonFunctions
         return SkipWhitespace(json, i + 1);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static int SkipWhitespace(ReadOnlySpan<char> json, int i)
     {
-        if (i < 0)
-            return -1;
+        for (int n = 0; n < 2; n++, i++)
+        {
+            if ((uint)i >= (uint)json.Length)
+                return -1;
+            if (json[i] is not (' ' or '\t' or '\r' or '\n'))
+                return i;
+        }
+
         int k = json[i..].IndexOfAnyExcept(Whitespace);
         return k < 0 ? -1 : i + k;
     }
