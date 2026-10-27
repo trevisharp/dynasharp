@@ -8,7 +8,7 @@ using System.Text.Json;
 
 
 using Dynasharp;
-using Dynasharp.Core.Functions;
+using Dynasharp.Internal;
 
 List<string> jsons = [
     """
@@ -85,6 +85,7 @@ var sw = new Stopwatch();
 evaluate("Solução Genérica", solutionA, 10);
 evaluate("Solução Própria", solutionB, 141);
 evaluate("Dynasharp", solutionC, 4);
+evaluate("Dynasharp 2", solutionD, 4);
 
 void evaluate(string title, Func<List<string?>> solution, int lines)
 {
@@ -284,7 +285,6 @@ List<string?> solutionC()
                 maxName = JsonFunctions.FindValue<string>(json, nameIndex);
             }
 
-            // Continua de onde a busca por "age" parou, sem reler o item
             itemIndex = ageIndex >= 0
                 ? JsonFunctions.FindNextItemFrom(json, ageIndex)
                 : JsonFunctions.FindNextItem(json, itemIndex);
@@ -295,9 +295,9 @@ List<string?> solutionC()
     }
 }
 
-List<string> solutionD()
+List<string?> solutionD()
 {
-    var algorithm = Dy.Optimize((ojson json) => json);
+    var algorithm = Dy.Optimize((list<ojson> json) => json);
 
     return [];
     // return

@@ -1,6 +1,6 @@
 using System.Dynamic;
 
-namespace Dynasharp.Core;
+namespace Dynasharp;
 
 /// <summary>
 /// Represents an algebraic algorithm.

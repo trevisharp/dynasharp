@@ -1,4 +1,4 @@
-namespace Dynasharp.Core.Exceptions;
+namespace Dynasharp.Exceptions;
 
 public class InvalidAlgorithmReturnException(Type? type) : Exception
 {

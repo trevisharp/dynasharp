@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Dynasharp.Core.Functions;
+namespace Dynasharp.Internal;
 
 public static class StringFunctions
 {

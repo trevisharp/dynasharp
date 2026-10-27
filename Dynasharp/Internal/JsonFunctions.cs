@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
-namespace Dynasharp.Core.Functions;
+namespace Dynasharp.Internal;
 
 /// <summary>
 /// A class with many performatic json functions.
